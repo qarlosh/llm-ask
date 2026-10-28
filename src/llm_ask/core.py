@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 BACKEND_ENV = "LLM_ASK_BACKEND"
 DEFAULT_BACKEND = "claude_cli"
@@ -93,6 +93,7 @@ def ask(
     timeout: float = 600,
     setting_sources: str = "",
     prompt_caching: bool = True,
+    validate: Callable[[Any], None] | None = None,
 ) -> Result:
     """Sends one request to the LLM chosen by LLM_ASK_BACKEND and returns its answer.
 
@@ -101,6 +102,9 @@ def ask(
     parsed object; without it, the text. `step` and `prompt_version` go to the log and the result.
     `setting_sources` only applies to `claude -p`; `prompt_caching=False` turns caching off,
     which is cheaper for prompts that are read once.
+
+    `validate` checks the output beyond the schema (ranges, ids that exist): it raises ValueError
+    to reject the answer, which then fails like any other bad answer.
 
     Raises LLMUnavailable or LLMFailed (both LLMError). Every call, failed or not, is appended
     to `log_path` as one JSON line when given.
@@ -126,6 +130,11 @@ def ask(
     start = time.monotonic()
     try:
         reply = _call_backend(backend, request)
+        if validate is not None:
+            try:
+                validate(reply.output)
+            except ValueError as e:
+                raise LLMFailed(f"output rejected: {e}") from e
     except LLMError as e:
         if log_path:
             entry.update(seconds=round(time.monotonic() - start, 2), error=f"{type(e).__name__}: {e}"[:500])

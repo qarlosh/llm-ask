@@ -49,3 +49,17 @@ def test_log_has_one_line_per_call_including_failures(fake_llm, tmp_path):
     }
     assert "seconds" in ok and "ts" in ok and "error" not in ok
     assert failed["error"] == "LLMFailed: refused"
+
+
+def _positive(output):
+    if output["n"] <= 0:
+        raise ValueError(f"n must be positive, got {output['n']}")
+
+
+def test_validate_rejects_and_logs(fake_llm, tmp_path):
+    log = tmp_path / "llm.jsonl"
+    fake_llm.respond({"n": 3}, {"n": -1})
+    assert ask_simple(validate=_positive, log_path=log).output == {"n": 3}
+    with pytest.raises(LLMFailed, match="n must be positive"):
+        ask_simple(validate=_positive, log_path=log)
+    assert json.loads(log.read_text().splitlines()[1])["error"] == "LLMFailed: output rejected: n must be positive, got -1"
