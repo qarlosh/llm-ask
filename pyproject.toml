@@ -13,6 +13,9 @@ api = [
     "anthropic>=2.3.0",
 ]
 
+[project.entry-points.pytest11]
+llm_ask = "llm_ask.pytest_plugin"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
