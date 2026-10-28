@@ -61,6 +61,7 @@ def test_result(api):
     result = ask_n()
     assert (result.output, result.model, result.backend) == ({"n": 3}, "claude-haiku-5-5", "anthropic_api")
     assert (result.input_tokens, result.output_tokens) == (152, 7)
+    assert (result.cache_read_tokens, result.cache_write_tokens, result.cost_usd, result.turns) == (50, 100, None, 1)
 
 
 def test_missing_key_means_unavailable(api, monkeypatch):

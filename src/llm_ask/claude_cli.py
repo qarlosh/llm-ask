@@ -72,8 +72,18 @@ def call(request: Request) -> Reply:
             raise LLMFailed(f"claude -p returned no structured output: {str(result.get('result'))[-500:]}")
 
     usage = result.get("usage") or {}
-    input_tokens = sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    cache_read = usage.get("cache_read_input_tokens") or 0
+    cache_write = usage.get("cache_creation_input_tokens") or 0
     # modelUsage lists every model the CLI used; the one that wrote the most is the one that answered
     by_model = result.get("modelUsage") or {}
     model = max(by_model, key=lambda m: by_model[m].get("outputTokens") or 0, default=request.model)
-    return Reply(output=output, model=model, input_tokens=input_tokens, output_tokens=usage.get("output_tokens") or 0)
+    return Reply(
+        output=output,
+        model=model,
+        input_tokens=(usage.get("input_tokens") or 0) + cache_read + cache_write,
+        output_tokens=usage.get("output_tokens") or 0,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        cost_usd=result.get("total_cost_usd"),
+        turns=result.get("num_turns") or 1,
+    )

@@ -67,5 +67,13 @@ def call(request: Request) -> Reply:
             raise LLMFailed(f"invalid JSON from the model: {text[-500:]}") from e
 
     u = message.usage
-    input_tokens = u.input_tokens + (u.cache_read_input_tokens or 0) + (u.cache_creation_input_tokens or 0)
-    return Reply(output=output, model=message.model, input_tokens=input_tokens, output_tokens=u.output_tokens)
+    cache_read = u.cache_read_input_tokens or 0
+    cache_write = u.cache_creation_input_tokens or 0
+    return Reply(
+        output=output,
+        model=message.model,
+        input_tokens=u.input_tokens + cache_read + cache_write,
+        output_tokens=u.output_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+    )

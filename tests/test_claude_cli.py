@@ -18,6 +18,8 @@ def cli_result(**overrides) -> str:
         "structured_output": {"n": 3},
         "usage": {"input_tokens": 2, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 50, "output_tokens": 7},
         "modelUsage": {"claude-haiku-5-5": {"outputTokens": 7}},
+        "total_cost_usd": 0.0004,
+        "num_turns": 2,
     }
     return json.dumps(result | overrides)
 
@@ -89,6 +91,8 @@ def test_result_carries_output_model_tokens_and_prompt_version(fake_run):
     assert result.prompt_version == "v1"
     assert result.backend == "claude_cli"
     assert (result.input_tokens, result.output_tokens) == (152, 7)
+    assert (result.cache_read_tokens, result.cache_write_tokens) == (50, 100)
+    assert (result.cost_usd, result.turns) == (0.0004, 2)
 
 
 def test_text_answer_without_schema(fake_run):

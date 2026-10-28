@@ -43,9 +43,10 @@ def test_log_has_one_line_per_call_including_failures(fake_llm, tmp_path):
     with pytest.raises(LLMFailed):
         ask_simple(log_path=log)
     ok, failed = [json.loads(line) for line in log.read_text().splitlines()]
-    assert {k: ok[k] for k in ("step", "backend", "model", "prompt_version", "input_tokens", "output_tokens")} == {
+    assert {k: v for k, v in ok.items() if k not in ("ts", "seconds")} == {
         "step": "greet", "backend": "claude_cli", "model": "haiku", "prompt_version": "v2",
-        "input_tokens": 0, "output_tokens": 0,
+        "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0,
+        "cost_usd": None, "turns": 1,
     }
     assert "seconds" in ok and "ts" in ok and "error" not in ok
     assert failed["error"] == "LLMFailed: refused"

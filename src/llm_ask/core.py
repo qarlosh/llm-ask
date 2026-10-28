@@ -44,7 +44,13 @@ class Reply:
     output: Any
     model: str
     input_tokens: int
+    """All input, cached or not."""
     output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float | None = None
+    """List-price cost as reported by the backend; None when it reports none."""
+    turns: int = 1
 
 
 @dataclass(frozen=True)
@@ -56,7 +62,14 @@ class Result:
     backend: str
     input_tokens: int
     output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None
+    turns: int
     seconds: float
+
+
+USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_usd", "turns")
 
 
 def _call_backend(name: str, request: Request) -> Reply:
@@ -141,15 +154,8 @@ def ask(
             _log(Path(log_path), entry)
         raise
     seconds = round(time.monotonic() - start, 2)
+    usage = {k: getattr(reply, k) for k in USAGE_FIELDS}
     if log_path:
-        entry.update(model=reply.model, input_tokens=reply.input_tokens, output_tokens=reply.output_tokens, seconds=seconds)
+        entry.update(model=reply.model, **usage, seconds=seconds)
         _log(Path(log_path), entry)
-    return Result(
-        output=reply.output,
-        model=reply.model,
-        prompt_version=prompt_version,
-        backend=backend,
-        input_tokens=reply.input_tokens,
-        output_tokens=reply.output_tokens,
-        seconds=seconds,
-    )
+    return Result(output=reply.output, model=reply.model, prompt_version=prompt_version, backend=backend, **usage, seconds=seconds)
