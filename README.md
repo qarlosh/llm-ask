@@ -7,11 +7,14 @@ produced it. Which LLM answers is chosen by an environment variable, not by the 
 - **Two backends for now**, both Claude:
   - `claude_cli` (default): `claude -p` from Claude Code, billed to your own Claude subscription.
   - `anthropic_api`: the Anthropic API with `ANTHROPIC_API_KEY`.
-- **Minimal `claude -p` startup:** your own system prompt, no tools, no MCP servers, no slash
-  commands or skills, no settings files (configurable), no saved session, structured output with
-  `--json-schema`, and an empty temporary working directory.
-- **Call log:** one JSON line per call (step, backend, model, prompt version, tokens, seconds, error).
-- **Typed errors** so the app can fall back to its deterministic path.
+- **Minimal `claude -p` startup** by default: your own system prompt, no tools, no MCP servers, no
+  slash commands or skills, no settings files, no saved session, structured output with
+  `--json-schema`, and an empty temporary working directory. An app can turn tools, MCP servers,
+  skills and settings back on with `ClaudeCliOptions`.
+- **Call log:** one JSON line per call (step, backend, model, prompt version, tokens with cache
+  reads and writes, cost, turns, seconds, error).
+- **Typed errors** so the app can fall back to its deterministic path, and a `validate` hook to
+  reject answers that fit the schema but make no sense.
 - **`untrusted()`** wraps third-party text in tags and tells the model it is data, not instructions.
 - **pytest guard:** real LLM calls are blocked in every test, and a `fake_llm` fixture gives canned
   answers.
@@ -77,7 +80,8 @@ def classify(review: str) -> str:
 
 ```python
 ask(prompt, *, system, model, step, prompt_version, schema=None, effort=None,
-    log_path=None, timeout=600, setting_sources="", prompt_caching=True) -> Result
+    log_path=None, timeout=600, prompt_caching=True, validate=None,
+    claude_cli=ClaudeCliOptions()) -> Result
 ```
 
 - `prompt`: a string, or a list of parts ordered from the most stable to the most variable. All of
@@ -86,16 +90,49 @@ ask(prompt, *, system, model, step, prompt_version, schema=None, effort=None,
 - `schema`: a JSON Schema. With it, `Result.output` is the parsed object; without it, the text.
 - `effort`: `low`, `medium`, `high`, `xhigh` or `max`, when the model supports it.
 - `log_path`: append one JSON line per call to this file, failed calls included.
-- `setting_sources`: `claude_cli` only. Empty by default; pass `"project"` if the call needs
-  something from the project's settings.
 - `prompt_caching=False`: turns prompt caching off (`DISABLE_PROMPT_CACHING=1` for `claude -p`).
-  Cheaper when each input is read only once, since writing to the cache costs more than reading
-  without it.
+  Cheaper when each input is read only once; see [Spending less](#spending-less).
+- `validate`: a function that gets the output and raises `ValueError` to reject it (a value out of
+  range, an id that does not exist). The call then fails with `LLMFailed` and the reason is logged.
+- `claude_cli`: see [Turning the startup back on](#turning-the-startup-back-on).
 
 `Result` has `output`, `model` (the one that answered), `prompt_version`, `backend`,
-`input_tokens` (cached ones included), `output_tokens` and `seconds`.
+`input_tokens` (all input, cached or not), `output_tokens`, `cache_read_tokens`,
+`cache_write_tokens`, `cost_usd`, `turns` and `seconds`. `cost_usd` is what `claude -p` reports at
+list price, which is not what a subscription charges but is good for comparing variants; the API
+backend leaves it `None`.
 
 `ask()` is synchronous. From async code, use `await asyncio.to_thread(ask, ...)`.
+
+### Turning the startup back on
+
+The minimal startup suits calls where the whole input fits in the message. When the model needs to
+look around, pass `ClaudeCliOptions`:
+
+```python
+from llm_ask import ClaudeCliOptions, ask
+
+result = ask(
+    "List the TODO comments in this project.",
+    system="You review code.",
+    model="sonnet",
+    step="todos",
+    prompt_version="todos-v1",
+    claude_cli=ClaudeCliOptions(tools=("Read", "Grep", "Glob"), cwd="path/to/project", max_budget_usd=0.5),
+)
+```
+
+| Option | Default | Effect |
+|---|---|---|
+| `tools` | `()` | Tools the model may use without asking, such as `("Read", "Grep")`; MCP tools as `"mcp__server__tool"`. Everything else is denied (`--permission-mode dontAsk`), so the call never waits for an answer. |
+| `cwd` | empty temporary directory | Where the CLI runs: what the tools see, and where `setting_sources="project"` reads from. |
+| `setting_sources` | `""` | Settings files to load: `user`, `project`, `local`, comma-separated. |
+| `mcp_config` | `None` | MCP servers as a JSON file path or JSON string. Only these load, never the user's own. |
+| `slash_commands` | `False` | Allow skills and slash commands, from the settings sources loaded. |
+| `max_budget_usd` | `None` | Stop the call past this list-price cost. Worth setting with tools, since each tool use is another turn. |
+
+The session is never saved. With `anthropic_api`, `tools` or `mcp_config` raise `ValueError`,
+since that backend cannot run them; the other options are ignored.
 
 ### Errors
 
@@ -114,6 +151,53 @@ Puts third-party text (a web page, an email, a transcript) between `<tag>` and `
 a sentence that says it is data and not instructions. Any `<tag>` or `</tag>` inside the text is
 escaped so it cannot close the block. This lowers the risk of prompt injection; it does not remove
 it. Still check the output beyond the schema: ranges, ids that exist.
+
+## Spending less
+
+Measured with `claude -p` and Haiku; check them on your own calls, since the `turns` and token
+columns of the log are there for that.
+
+- **Keep the minimal startup.** The default Claude Code setup sends about 31,500 tokens per turn;
+  without MCP servers it was the same; with only `Read` and no MCP servers or skills, about 5,100;
+  with your own system prompt too, about 2,300. `ask()` does this by default.
+- **Put the whole input in the message.** Each file the model opens with a tool adds a turn that
+  re-reads the whole context. In one app a single-image call reached about 73,000 tokens that way.
+- **Turn the cache off for inputs read once** (`prompt_caching=False`). With a subscription,
+  writing to the prompt cache costs about twice normal input, and data that is never sent again
+  is never read back. In one app this cut about 30% per call with the same answers. The shared
+  prefix (system prompt, schema) is still read from the cache. Leave caching on when the same
+  large input goes into several calls within the hour.
+- **Many calls with the same prefix: run the first alone, then the rest in parallel.** The first
+  call writes the prefix to the cache; the others read it.
+- **Keep `--json-schema`.** Structured output costs one extra turn, but asking for JSON in the text
+  instead only saved about 5% of input, was slower and was less accurate.
+- **Choose the model per task, by measuring.** Compare variants with the log's tokens, `cost_usd`
+  and `turns`, not by feel.
+- **What did not help:** `--effort low` changed nothing measurable on Haiku, and its reasoning
+  could not be turned off (`MAX_THINKING_TOKENS=0`). `--exclude-dynamic-system-prompt-sections`
+  changes nothing with your own system prompt.
+
+### Answering faster
+
+These are not in `ask()`: they need a long-running process and streaming, which only pay off in
+real time apps (a voice bot, for instance).
+
+- **Starting `claude -p` costs about 1.7 to 5 seconds.** Keep it off the critical path.
+- **Keep one conversation alive** with `--input-format stream-json --output-format stream-json`
+  and write each request as a new user message. A decision took about 1.5 s instead of 3.7 s, as
+  it skips the startup and reuses the conversation's cache. The context grows with each message.
+- **Keep processes started and waiting** on stdin, one per (model, effort, system prompt), and
+  use each for a single answer. The first streamed token arrived in about 0.7 s instead of 5 s.
+- **Reasoning:** in one app, `MAX_THINKING_TOKENS=0` with `--effort low` cut a decision from about
+  2.3 s to 1 s, while on Haiku it made no difference (see above). Measure it on your model.
+
+### Other tips
+
+- **Images:** scale them to 1568 px on the long side before sending. More adds tokens, not detail.
+  (`ask()` does not take images yet.)
+- **A separate login for the app:** `claude setup-token` creates a long-lived token. Pass it in
+  `CLAUDE_CODE_OAUTH_TOKEN` and the app's calls do not use or refresh the terminal's login. `ask()`
+  passes the environment through.
 
 ## Tests
 
