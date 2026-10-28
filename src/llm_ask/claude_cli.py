@@ -1,14 +1,16 @@
 """Backend `claude_cli`: `claude -p` from Claude Code, billed to the caller's own Claude subscription.
 
-The call is stripped to the minimum: our own system prompt, no tools, no MCP servers, no slash
-commands or skills, no settings files, no saved session, and an empty temporary working
+By default the call is stripped to the minimum: our own system prompt, no tools, no MCP servers,
+no slash commands or skills, no settings files, no saved session, and an empty temporary working
 directory so no project CLAUDE.md is loaded. The whole input travels in the one user message.
+ClaudeCliOptions turns parts of this back on; the session is never saved.
 """
 
 import json
 import os
 import subprocess
 import tempfile
+from contextlib import nullcontext
 
 from .core import LLMFailed, LLMUnavailable, Reply, Request
 
@@ -17,17 +19,27 @@ AUTH_HINTS = ("not logged in", "/login", "authenticate", "oauth", "401", "unauth
 
 
 def command(request: Request) -> list[str]:
+    o = request.claude_cli
+    builtin = [t for t in o.tools if not t.startswith("mcp__")]  # --tools only takes built-in names
     cmd = [
         "claude", "-p",
         "--model", request.model,
         "--system-prompt", request.system,
-        "--tools", "",
+        "--tools", ",".join(builtin),
         "--strict-mcp-config",
-        "--disable-slash-commands",
-        "--setting-sources", request.setting_sources,
+        "--setting-sources", o.setting_sources,
         "--no-session-persistence",
         "--output-format", "json",
     ]  # fmt: skip
+    if o.tools:
+        # Listed tools run without asking; dontAsk denies the rest instead of waiting for an answer
+        cmd += ["--allowedTools", ",".join(o.tools), "--permission-mode", "dontAsk"]
+    if o.mcp_config:
+        cmd += ["--mcp-config", o.mcp_config]
+    if not o.slash_commands:
+        cmd.append("--disable-slash-commands")
+    if o.max_budget_usd is not None:
+        cmd += ["--max-budget-usd", str(o.max_budget_usd)]
     if request.effort:
         cmd += ["--effort", request.effort]
     if request.schema is not None:
@@ -49,7 +61,8 @@ def call(request: Request) -> Reply:
     env = dict(os.environ)
     if not request.prompt_caching:
         env["DISABLE_PROMPT_CACHING"] = "1"
-    with tempfile.TemporaryDirectory(prefix="llm-ask-") as cwd:
+    cwd_given = request.claude_cli.cwd
+    with nullcontext(str(cwd_given)) if cwd_given else tempfile.TemporaryDirectory(prefix="llm-ask-") as cwd:
         try:
             done = _run(command(request), "\n\n".join(request.parts), cwd, env, request.timeout)
         except FileNotFoundError as e:
@@ -62,7 +75,8 @@ def call(request: Request) -> Reply:
     except json.JSONDecodeError:
         raise _error((done.stderr or done.stdout or f"exit code {done.returncode}").strip()[-500:]) from None
     if result.get("is_error") or done.returncode != 0:
-        raise _error(str(result.get("result") or result.get("subtype") or done.stderr).strip()[-500:])
+        detail = result.get("result") or "; ".join(result.get("errors") or []) or result.get("subtype") or done.stderr
+        raise _error(str(detail).strip()[-500:])
 
     if request.schema is None:
         output = result.get("result")

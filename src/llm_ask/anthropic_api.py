@@ -39,6 +39,8 @@ def _create(p: dict, timeout: float):
 
 
 def call(request: Request) -> Reply:
+    if request.claude_cli.tools or request.claude_cli.mcp_config:
+        raise ValueError("tools and MCP servers need the claude_cli backend")
     try:
         import anthropic
     except ImportError as e:

@@ -26,6 +26,25 @@ class LLMFailed(LLMError):
 
 
 @dataclass(frozen=True)
+class ClaudeCliOptions:
+    """What the `claude_cli` backend turns back on. The defaults are the minimal startup."""
+
+    tools: tuple[str, ...] = ()
+    """Tools it may use without asking, e.g. ("Read", "Grep"); MCP tools as "mcp__server__tool".
+    Anything else is denied. Empty: no tools, and the model sees only the message."""
+    cwd: str | Path | None = None
+    """Working directory, for tools and for setting_sources="project". None: an empty temporary one."""
+    setting_sources: str = ""
+    """Settings files to load: "user", "project", "local", comma-separated. Empty: none."""
+    mcp_config: str | None = None
+    """MCP servers, as a JSON file path or JSON string. Only these load, never the user's."""
+    slash_commands: bool = False
+    """Allow skills and slash commands (those found through setting_sources)."""
+    max_budget_usd: float | None = None
+    """Stop the call past this list-price cost; worth setting when tools allow many turns."""
+
+
+@dataclass(frozen=True)
 class Request:
     parts: list[str]
     system: str
@@ -33,8 +52,8 @@ class Request:
     schema: dict | None
     effort: str | None
     timeout: float
-    setting_sources: str
     prompt_caching: bool
+    claude_cli: ClaudeCliOptions
 
 
 @dataclass(frozen=True)
@@ -104,17 +123,18 @@ def ask(
     effort: str | None = None,
     log_path: str | Path | None = None,
     timeout: float = 600,
-    setting_sources: str = "",
     prompt_caching: bool = True,
     validate: Callable[[Any], None] | None = None,
+    claude_cli: ClaudeCliOptions = ClaudeCliOptions(),
 ) -> Result:
     """Sends one request to the LLM chosen by LLM_ASK_BACKEND and returns its answer.
 
     `prompt` may be a list of parts, ordered from the most stable to the most variable; the API
     backend caches up to the second-to-last one. With `schema` (a JSON Schema) the answer is the
     parsed object; without it, the text. `step` and `prompt_version` go to the log and the result.
-    `setting_sources` only applies to `claude -p`; `prompt_caching=False` turns caching off,
-    which is cheaper for prompts that are read once.
+    `prompt_caching=False` turns caching off, which is cheaper for prompts that are read once.
+    `claude_cli` turns parts of the minimal `claude -p` startup back on; the other backends
+    ignore it, except tools and MCP servers, which they cannot honour (ValueError).
 
     `validate` checks the output beyond the schema (ranges, ids that exist): it raises ValueError
     to reject the answer, which then fails like any other bad answer.
@@ -130,8 +150,8 @@ def ask(
         schema=schema,
         effort=effort,
         timeout=timeout,
-        setting_sources=setting_sources,
         prompt_caching=prompt_caching,
+        claude_cli=claude_cli,
     )
     entry = {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),

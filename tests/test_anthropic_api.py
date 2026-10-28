@@ -4,7 +4,7 @@ import anthropic
 import httpx2 as httpx
 import pytest
 
-from llm_ask import LLMFailed, LLMUnavailable, ask
+from llm_ask import ClaudeCliOptions, LLMFailed, LLMUnavailable, ask
 from llm_ask import anthropic_api
 
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
@@ -62,6 +62,16 @@ def test_result(api):
     assert (result.output, result.model, result.backend) == ({"n": 3}, "claude-haiku-5-5", "anthropic_api")
     assert (result.input_tokens, result.output_tokens) == (152, 7)
     assert (result.cache_read_tokens, result.cache_write_tokens, result.cost_usd, result.turns) == (50, 100, None, 1)
+
+
+def test_other_claude_cli_options_are_ignored(api):
+    assert ask_n(claude_cli=ClaudeCliOptions(setting_sources="project", max_budget_usd=1)).output == {"n": 3}
+
+
+@pytest.mark.parametrize("options", [ClaudeCliOptions(tools=("Read",)), ClaudeCliOptions(mcp_config="{}")])
+def test_tools_and_mcp_need_claude_cli(api, options):
+    with pytest.raises(ValueError, match="claude_cli"):
+        ask_n(claude_cli=options)
 
 
 def test_missing_key_means_unavailable(api, monkeypatch):
