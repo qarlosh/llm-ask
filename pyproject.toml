@@ -1,0 +1,24 @@
+[project]
+name = "llm-ask"
+version = "0.1.0"
+description = "One provider-neutral ask() for structured LLM calls, with a call log, typed errors and a pytest guard."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Carlos Herrero" }]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+api = [
+    "anthropic>=2.3.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "anthropic>=2.3.0",
+    "pytest>=9.2.0",
+]
